@@ -6,7 +6,7 @@ from policy_linear_Q import LinearQLearningAgent
 from policies import get_possible_next_states
 
 # ---- CONFIG ----
-WEIGHTS = np.array([0.5, -0.01, -0.05, -0.05])  # example learned weights
+WEIGHTS = np.array([0.5, -0.01, -0.5, -0.5])  # example learned weights
 RENDER = True
 
 # ---- INIT ----
