@@ -303,19 +303,30 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 ]
             )
         else:
-            # Normalization by dividing with piece count
-            q_values = (
-                torch.ones((1, envs.single_action_space.n, 1), dtype=torch.float)
-                * -np.inf
-            )
-            action_mask_t = torch.as_tensor(action_mask, device=device)  # device is cuda:0
-            # optionally make it boolean
-            action_mask_t = action_mask_t.bool()  # or (action_mask_t == 1)
-            q_values[:, action_mask_t, :] = q_network(torch.Tensor(obs[:, action_mask_t, :]).to(device))
-            # q_values[:, action_mask == 1, :] = q_network(
-            #     torch.Tensor(obs[:, action_mask == 1, :]).to(device)
+            # # Normalization by dividing with piece count
+            # q_values = (
+            #     torch.ones((1, envs.single_action_space.n, 1), dtype=torch.float)
+            #     * -np.inf
             # )
-            actions = torch.argmax(q_values, dim=1)[0].cpu().numpy()
+            # action_mask_t = torch.as_tensor(action_mask, device=device)  # device is cuda:0
+            # # optionally make it boolean
+            # action_mask_t = action_mask_t.bool()  # or (action_mask_t == 1)
+            # q_values[:, action_mask_t, :] = q_network(torch.Tensor(obs[:, action_mask_t, :]).to(device))
+            # # q_values[:, action_mask == 1, :] = q_network(
+            # #     torch.Tensor(obs[:, action_mask == 1, :]).to(device)
+            # # )
+            # actions = torch.argmax(q_values, dim=1)[0].cpu().numpy()
+            # Compute Q-values on the correct device and mask invalid actions so argmax
+            # can never select an illegal action.
+            obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32)
+            q_values = q_network(obs_t)  # (num_envs, n_actions, 1)
+
+            action_mask_t = torch.as_tensor(action_mask, device=device).bool()  # (n_actions,) or (num_envs, n_actions)
+            if action_mask_t.ndim == 1:
+                action_mask_t = action_mask_t.unsqueeze(0).expand(q_values.shape[0], -1)
+
+            q_values = q_values.masked_fill(~action_mask_t.unsqueeze(-1), -1e9)
+            actions = torch.argmax(q_values.squeeze(-1), dim=1).cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
