@@ -308,9 +308,13 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 torch.ones((1, envs.single_action_space.n, 1), dtype=torch.float)
                 * -np.inf
             )
-            q_values[:, action_mask == 1, :] = q_network(
-                torch.Tensor(obs[:, action_mask == 1, :]).to(device)
-            )
+            action_mask_t = torch.as_tensor(action_mask, device=device)  # device is cuda:0
+            # optionally make it boolean
+            action_mask_t = action_mask_t.bool()  # or (action_mask_t == 1)
+            q_values[:, action_mask_t, :] = q_network(torch.Tensor(obs[:, action_mask_t, :]).to(device))
+            # q_values[:, action_mask == 1, :] = q_network(
+            #     torch.Tensor(obs[:, action_mask == 1, :]).to(device)
+            # )
             actions = torch.argmax(q_values, dim=1)[0].cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
