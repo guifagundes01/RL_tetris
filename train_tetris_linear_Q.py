@@ -104,8 +104,8 @@ RENDER = True
 
 # Initialize
 agent = LinearQLearningAgent(learning_rate=0.001, epsilon=1.0)
-# env = gym.make("tetris_gymnasium/Tetris", render_mode=None)
-env = gym.make("tetris_gymnasium/Tetris", render_mode="human", render_upscale=40)
+env = gym.make("tetris_gymnasium/Tetris", render_mode=None)
+# env = gym.make("tetris_gymnasium/Tetris", render_mode="human", render_upscale=40)
 
 # env = gym.make("tetris_gymnasium/Tetris", render_mode=None) # faster without render
 
@@ -125,9 +125,9 @@ for episode in range(500):
     plays = 0
     while not terminated:
         plays += 1
-        if RENDER:
-            env.render()
-            cv2.waitKey(1)
+        # if RENDER:
+        #     env.render()
+        #     cv2.waitKey(1)
         # 1. Choose Action
         best_candidate = agent.choose_action(env)
         
