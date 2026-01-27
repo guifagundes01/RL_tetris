@@ -99,7 +99,7 @@ class Args:
     # env_id: str = "BreakoutNoFrameskip-v4"
     env_id: str = "tetris_gymnasium/Tetris"
     """the id of the environment"""
-    total_timesteps: int = 10000
+    total_timesteps: int = 500000
     """total timesteps of the experiments"""
     learning_rate: float = 5e-4
     """the learning rate of the optimizer"""
@@ -191,13 +191,20 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 
 def count_holes(board: np.ndarray) -> int:
     """Count holes (empty cells with a filled cell above) in a board."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    filled_above = np.maximum.accumulate(filled, axis=0)
-    holes = (~filled) & filled_above
-    return int(holes.sum())
+    # grid = np.asarray(board)
+    # if grid.ndim != 2:
+    #     return 0
+    # filled = grid > 0
+    # filled_above = np.maximum.accumulate(filled, axis=0)
+    # holes = (~filled) & filled_above
+    # return int(holes.sum())
+    nb_holes = 0
+    #loop over the lines and columns of the board
+    for i in range(board.shape[0]):
+        for j in range(board.shape[1]):
+            #if board[i,j] = 0 and board[i-1,j] != 0 then pixel [i,j] is a hole
+            if (i > 1) and (board[i,j] == 0) and (board[i-1,j] != 0): nb_holes = nb_holes + 1
+    return nb_holes
 
 
 def compute_bumpiness(board: np.ndarray) -> int:
@@ -514,5 +521,9 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         torch.save(q_network.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
-    envs.close()
+    try:
+        envs.close()
+    except AttributeError:
+        # wandb gym integration has compatibility issues with RecordVideo wrapper
+        pass
     writer.close()
