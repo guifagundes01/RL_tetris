@@ -134,9 +134,22 @@ class Args:
 
 
 def make_env(env_id, seed, idx, capture_video, run_name):
+    """
+    Create environment with GroupedActionsObservations + FeatureVectorObservation.
+    
+    FeatureVectorObservation output order (13 features total):
+    - indices 0-9: Column heights (actual height, higher = taller stack)
+    - index 10: Max height
+    - index 11: Number of holes
+    - index 12: Bumpiness
+    
+    The QNetwork learns from these features directly.
+    Reward shaping also uses these features from the observation.
+    """
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array", gravity=False)
+            # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
             env = GroupedActionsObservations(
                 env, observation_wrappers=[FeatureVectorObservation(env)]
             )
@@ -147,6 +160,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             )
         else:
             env = gym.make(env_id, render_mode="rgb_array", gravity=False)
+            # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
             env = GroupedActionsObservations(
                 env, observation_wrappers=[FeatureVectorObservation(env)]
             )
@@ -187,53 +201,6 @@ class QNetwork(nn.Module):
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
-
-
-def count_holes(board: np.ndarray) -> int:
-    """Count holes (empty cells with a filled cell above) in a board."""
-    # grid = np.asarray(board)
-    # if grid.ndim != 2:
-    #     return 0
-    # filled = grid > 0
-    # filled_above = np.maximum.accumulate(filled, axis=0)
-    # holes = (~filled) & filled_above
-    # return int(holes.sum())
-    nb_holes = 0
-    #loop over the lines and columns of the board
-    for i in range(board.shape[0]):
-        for j in range(board.shape[1]):
-            #if board[i,j] = 0 and board[i-1,j] != 0 then pixel [i,j] is a hole
-            if (i > 1) and (board[i,j] == 0) and (board[i-1,j] != 0): nb_holes = nb_holes + 1
-    return nb_holes
-
-
-def compute_bumpiness(board: np.ndarray) -> int:
-    """Compute bumpiness (sum of absolute height differences between adjacent columns)."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    # Get column heights (first filled cell from top, or 0 if empty)
-    heights = np.zeros(grid.shape[1], dtype=int)
-    for col in range(grid.shape[1]):
-        col_filled = np.where(filled[:, col])[0]
-        if len(col_filled) > 0:
-            heights[col] = grid.shape[0] - col_filled[0]
-    # Sum of absolute differences between adjacent columns
-    bumpiness = int(np.sum(np.abs(np.diff(heights))))
-    return bumpiness
-
-
-def compute_max_height(board: np.ndarray) -> int:
-    """Compute maximum column height."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    for row in range(grid.shape[0]):
-        if np.any(filled[row]):
-            return grid.shape[0] - row
-    return 0
 
 
 if __name__ == "__main__":
@@ -337,7 +304,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
     # TRY NOT TO MODIFY: start the game
     obs, info = envs.reset(seed=args.seed)
-    board = info["board"][0]
     action_mask = info["action_mask"][0]
 
     epoch = 0
@@ -388,9 +354,24 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         global_step += 1
 
-        next_board = infos["board"][0]
         action_mask = infos["action_mask"][0]
         epoch_lines_cleared += infos["lines_cleared"][0]
+        
+        # Extract features from FeatureVectorObservation for reward shaping
+        # Feature order: [heights(0-9), max_height(10), holes(11), bumpiness(12)]
+        # obs shape: (num_envs, n_actions, 13)
+        # Get features from the chosen action's afterstate
+        action_idx = actions[0]
+        
+        # Current state features (before action)
+        obs_holes_before = obs[0, action_idx, 11] if obs.ndim == 3 else obs[action_idx, 11]
+        
+        # Next state features (after action)
+        # Use first valid action's features as representative of current board state
+        valid_action = np.where(action_mask == 1)[0][0] if np.any(action_mask == 1) else 0
+        obs_holes_after = next_obs[0, valid_action, 11] if next_obs.ndim == 3 else next_obs[valid_action, 11]
+        obs_bumpiness = next_obs[0, valid_action, 12] if next_obs.ndim == 3 else next_obs[valid_action, 12]
+        obs_max_height = next_obs[0, valid_action, 10] if next_obs.ndim == 3 else next_obs[valid_action, 10]
         
         # Reward shaping for better piece placement
         rewards = rewards.copy()
@@ -398,27 +379,24 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         
         # Hole penalty (new holes created)
         if args.hole_penalty != 0.0:
-            holes_before = count_holes(board)
-            holes_after = count_holes(next_board)
-            holes_created = max(0, holes_after - holes_before)
+            holes_created = max(0, int(obs_holes_after) - int(obs_holes_before))
             if holes_created > 0:
                 shaping_penalty += args.hole_penalty * holes_created
         
         # Aggregate hole penalty (total holes - constant pressure)
         if args.aggregate_hole_penalty != 0.0:
-            total_holes = count_holes(next_board)
-            shaping_penalty += args.aggregate_hole_penalty * total_holes
+            shaping_penalty += args.aggregate_hole_penalty * float(obs_holes_after)
         
         # Bumpiness penalty (uneven surface)
         if args.bumpiness_penalty != 0.0:
-            bumpiness = compute_bumpiness(next_board)
-            shaping_penalty += args.bumpiness_penalty * (bumpiness / 10.0)  # Normalize
+            shaping_penalty += args.bumpiness_penalty * (float(obs_bumpiness) / 10.0)  # Normalize
         
         rewards[0] -= shaping_penalty
         
         if global_step % 100 == 0:
-            writer.add_scalar("charts/holes_total", count_holes(next_board), global_step)
-            writer.add_scalar("charts/bumpiness", compute_bumpiness(next_board), global_step)
+            writer.add_scalar("charts/holes_total", obs_holes_after, global_step)
+            writer.add_scalar("charts/bumpiness", obs_bumpiness, global_step)
+            writer.add_scalar("charts/max_height", obs_max_height, global_step)
             writer.add_scalar("charts/shaping_penalty", shaping_penalty, global_step)
 
         # # TRY NOT TO MODIFY: record rewards for plotting purposes
@@ -451,11 +429,18 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
 
-        # TRY NOT TO MODIFY: save data to reply buffer
-        rb.add(board, next_board, actions, rewards, terminations, infos)
+        # Save to replay buffer: store the chosen action's features
+        # obs shape: (num_envs, n_actions, 13), we want features for the chosen action
+        action_idx = actions[0]
+        chosen_obs = obs[0, action_idx, :].reshape(1, -1)  # Shape: (1, 13)
+        
+        # For next obs, use first valid action as representative
+        valid_action = np.where(action_mask == 1)[0][0] if np.any(action_mask == 1) else 0
+        next_chosen_obs = next_obs[0, valid_action, :].reshape(1, -1)  # Shape: (1, 13)
+        
+        rb.add(chosen_obs, next_chosen_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        board = next_board.copy()
         obs = next_obs
 
         # ALGO LOGIC: training.
