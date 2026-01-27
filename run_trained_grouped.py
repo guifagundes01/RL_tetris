@@ -9,16 +9,16 @@ from tetris_gymnasium.envs import Tetris
 from tetris_gymnasium.wrappers.grouped import GroupedActionsObservations
 from tetris_gymnasium.wrappers.observation import FeatureVectorObservation
 
-from train_lin_grouped import QNetwork
+from train_lin_grouped_original import QNetwork
 
 import cv2
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="train_lin_grouped_board_rewards.cleanrl_model")
+    parser.add_argument("--model-path", type=str, default="checkpoint_95000.cleanrl_model")
     parser.add_argument("--env-id", type=str, default="tetris_gymnasium/Tetris")
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epsilon", type=float, default=0.0)
     parser.add_argument("--render-upscale", type=int, default=40)
     return parser.parse_args()
@@ -43,7 +43,7 @@ def main() -> None:
 
 
 
-    env = gym.make(args.env_id, render_mode="rgb_array", gravity=False)
+    env = gym.make(args.env_id, render_mode="human", gravity=False)
             # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
     env = GroupedActionsObservations(
         env, observation_wrappers=[FeatureVectorObservation(env)]
