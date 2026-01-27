@@ -43,12 +43,12 @@ def main() -> None:
 
 
 
-    env = gym.make(args.env_id, render_mode="human", gravity=False)
+    env = gym.make(args.env_id, render_mode="rgb_array", gravity=False)
             # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
     env = GroupedActionsObservations(
         env, observation_wrappers=[FeatureVectorObservation(env)]
     )
-    env = gym.wrappers.RecordEpisodeStatistics(env)
+    env = gym.wrappers.RecordVideo(env, f"videos/run_trained_grouped")
 
     model = QNetwork(type("EnvWrap", (), {"single_observation_space": env.observation_space})())
     model.load_state_dict(torch.load(args.model_path, map_location="cpu"))
@@ -61,8 +61,8 @@ def main() -> None:
     total_reward = 0.0
 
     while not (terminated or truncated):
-        env.render()
-        cv2.waitKey(1)
+        # env.render()
+        # cv2.waitKey(1)
         obs_t = torch.as_tensor(obs, dtype=torch.float32)
         if obs_t.ndim == 2:
             obs_t = obs_t.unsqueeze(0)
