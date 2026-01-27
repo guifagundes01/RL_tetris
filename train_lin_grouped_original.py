@@ -99,9 +99,9 @@ class Args:
     # env_id: str = "BreakoutNoFrameskip-v4"
     env_id: str = "tetris_gymnasium/Tetris"
     """the id of the environment"""
-    total_timesteps: int = 500000
+    total_timesteps: int = 250000
     """total timesteps of the experiments"""
-    learning_rate: float = 5e-4
+    learning_rate: float = 1e-3
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -109,8 +109,8 @@ class Args:
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
-    tau: float = 0.005
-    """the target network update rate (soft update)"""
+    tau: float = 1.0
+    """the target network update rate"""
     target_network_frequency: int = 1
     """the timesteps it takes to update the target network"""
     batch_size: int = 512
@@ -125,12 +125,8 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 20
     """the frequency of training"""
-    hole_penalty: float = 2.0
+    hole_penalty: float = 0.0
     """penalty per newly created hole (0 disables shaping)"""
-    bumpiness_penalty: float = 0.5
-    """penalty for height differences between adjacent columns"""
-    aggregate_hole_penalty: float = 0.1
-    """penalty per total hole in the board (cumulative pressure)"""
 
 
 def make_env(env_id, seed, idx, capture_video, run_name):
@@ -163,13 +159,10 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        input_dim = np.array(env.single_observation_space.shape[-1])
         self.network = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(np.array(env.single_observation_space.shape[-1]), 64),
             nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
         )
@@ -198,35 +191,6 @@ def count_holes(board: np.ndarray) -> int:
     filled_above = np.maximum.accumulate(filled, axis=0)
     holes = (~filled) & filled_above
     return int(holes.sum())
-
-
-def compute_bumpiness(board: np.ndarray) -> int:
-    """Compute bumpiness (sum of absolute height differences between adjacent columns)."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    # Get column heights (first filled cell from top, or 0 if empty)
-    heights = np.zeros(grid.shape[1], dtype=int)
-    for col in range(grid.shape[1]):
-        col_filled = np.where(filled[:, col])[0]
-        if len(col_filled) > 0:
-            heights[col] = grid.shape[0] - col_filled[0]
-    # Sum of absolute differences between adjacent columns
-    bumpiness = int(np.sum(np.abs(np.diff(heights))))
-    return bumpiness
-
-
-def compute_max_height(board: np.ndarray) -> int:
-    """Compute maximum column height."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    for row in range(grid.shape[0]):
-        if np.any(filled[row]):
-            return grid.shape[0] - row
-    return 0
 
 
 if __name__ == "__main__":
@@ -384,35 +348,15 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         next_board = infos["board"][0]
         action_mask = infos["action_mask"][0]
         epoch_lines_cleared += infos["lines_cleared"][0]
-        
-        # Reward shaping for better piece placement
-        rewards = rewards.copy()
-        shaping_penalty = 0.0
-        
-        # Hole penalty (new holes created)
         if args.hole_penalty != 0.0:
             holes_before = count_holes(board)
             holes_after = count_holes(next_board)
             holes_created = max(0, holes_after - holes_before)
             if holes_created > 0:
-                shaping_penalty += args.hole_penalty * holes_created
-        
-        # Aggregate hole penalty (total holes - constant pressure)
-        if args.aggregate_hole_penalty != 0.0:
-            total_holes = count_holes(next_board)
-            shaping_penalty += args.aggregate_hole_penalty * total_holes
-        
-        # Bumpiness penalty (uneven surface)
-        if args.bumpiness_penalty != 0.0:
-            bumpiness = compute_bumpiness(next_board)
-            shaping_penalty += args.bumpiness_penalty * (bumpiness / 10.0)  # Normalize
-        
-        rewards[0] -= shaping_penalty
-        
-        if global_step % 100 == 0:
-            writer.add_scalar("charts/holes_total", count_holes(next_board), global_step)
-            writer.add_scalar("charts/bumpiness", compute_bumpiness(next_board), global_step)
-            writer.add_scalar("charts/shaping_penalty", shaping_penalty, global_step)
+                rewards = rewards.copy()
+                rewards[0] -= args.hole_penalty * holes_created
+            if global_step % 100 == 0:
+                writer.add_scalar("charts/holes_created", holes_created, global_step)
 
         # # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
@@ -456,20 +400,16 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    # Double DQN: use online network to select action, target network to evaluate
-                    next_q_online = q_network(data.next_observations).squeeze(-1).squeeze(-1)
-                    next_q_target = target_network(data.next_observations).squeeze(-1).squeeze(-1)
-                    # For single observation per sample, just use the target value directly
-                    # (In grouped setting, each sample is one state-value, not state-action)
-                    target_max = next_q_target
+                    target_max = (
+                        q_network(data.next_observations).squeeze(-1).squeeze(-1)
+                    )
                     td_target = data.rewards.flatten() + args.gamma * target_max * (
                         1 - data.dones.flatten()
                     )
                 old_val = q_network(data.observations).squeeze(-1).squeeze(-1)
 
                 assert old_val.shape == td_target.shape
-                # Huber loss is more robust to outliers than MSE
-                loss = F.smooth_l1_loss(old_val, td_target)
+                loss = F.mse_loss(old_val, td_target)
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
@@ -495,8 +435,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 # optimize the model
                 optimizer.zero_grad()
                 loss.backward()
-                # Gradient clipping to prevent exploding gradients
-                torch.nn.utils.clip_grad_norm_(q_network.parameters(), max_norm=10.0)
                 optimizer.step()
 
             # update target network
