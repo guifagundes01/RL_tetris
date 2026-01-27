@@ -99,9 +99,9 @@ class Args:
     # env_id: str = "BreakoutNoFrameskip-v4"
     env_id: str = "tetris_gymnasium/Tetris"
     """the id of the environment"""
-    total_timesteps: int = 500000
+    total_timesteps: int = 20000
     """total timesteps of the experiments"""
-    learning_rate: float = 5e-4
+    learning_rate: float = 0.001
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -526,6 +526,12 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                         args.tau * q_network_param.data
                         + (1.0 - args.tau) * target_network_param.data
                     )
+
+            # Save checkpoint every 5000 steps
+            if global_step % 5000 == 0 and global_step > 0:
+                checkpoint_path = f"runs/{run_name}/checkpoint_{global_step}.cleanrl_model"
+                torch.save(q_network.state_dict(), checkpoint_path)
+                print(f"Saved checkpoint to {checkpoint_path}")
 
     if args.save_model:
         model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"

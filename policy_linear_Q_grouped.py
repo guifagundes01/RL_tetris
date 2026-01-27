@@ -89,7 +89,52 @@ class LinearQAgentGrouped:
         """Linear Q-value: Q(s) = weights · features"""
         return np.dot(self.weights, features)
     
-    def choose_action(self, obs, action_mask, lines_cleared_per_action=None):
+    def estimate_lines_cleared(self, obs, current_agg_height=None):
+        """
+        Estimate lines cleared per action based on height differences.
+        
+        Logic: A piece adds ~4 cells. If a line is cleared, 10 cells are removed.
+        So if height increases by less than expected, lines were likely cleared.
+        
+        Args:
+            obs: shape (n_actions, 13) - afterstates for each action
+            current_agg_height: current aggregate height before any action (optional)
+        
+        Returns:
+            lines_per_action: array of estimated lines cleared for each action
+        """
+        n_actions = obs.shape[0]
+        lines_per_action = np.zeros(n_actions, dtype=int)
+        
+        # Get aggregate height for each afterstate (sum of column heights)
+        afterstate_heights = np.sum(obs[:, :10], axis=1)
+        
+        if current_agg_height is None:
+            # Estimate current height from the minimum afterstate height + typical piece size
+            # (the action that adds the least height likely didn't clear lines)
+            min_afterstate_height = np.min(afterstate_heights)
+            # Assume piece adds ~4 cells on average
+            current_agg_height = max(0, min_afterstate_height - 4)
+        
+        for i in range(n_actions):
+            afterstate_height = afterstate_heights[i]
+            # Expected: current + 4 (piece cells)
+            # Actual: afterstate_height
+            # Each line cleared removes 10 cells
+            height_diff = afterstate_height - current_agg_height
+            
+            # If height_diff < 4, lines were probably cleared
+            # lines_cleared ≈ (4 - height_diff) / 10, but we round to nearest int
+            if height_diff < 0:
+                # Height decreased significantly = lines cleared
+                lines_per_action[i] = max(1, int((-height_diff + 6) / 10))
+            elif height_diff < 4:
+                # Height increased less than expected = possibly cleared lines
+                lines_per_action[i] = max(0, int((4 - height_diff) / 10))
+        
+        return lines_per_action
+    
+    def choose_action(self, obs, action_mask, lines_cleared_per_action=None, debug=False, estimate_lines=True, current_agg_height=None):
         """
         Choose the best action from grouped observations.
         
@@ -97,6 +142,9 @@ class LinearQAgentGrouped:
             obs: shape (n_actions, 13) - feature vectors for each possible placement
             action_mask: shape (n_actions,) - 1 if action is valid, 0 otherwise
             lines_cleared_per_action: optional array of lines cleared per action
+            debug: if True, print debug info about action evaluation
+            estimate_lines: if True and lines_cleared_per_action is None, estimate from heights
+            current_agg_height: current aggregate height (for better line estimation)
         
         Returns:
             best_action: int - the action index to take
@@ -106,6 +154,10 @@ class LinearQAgentGrouped:
         
         if len(valid_actions) == 0:
             return None, None
+        
+        # Estimate lines cleared if not provided
+        if lines_cleared_per_action is None and estimate_lines:
+            lines_cleared_per_action = self.estimate_lines_cleared(obs, current_agg_height)
         
         # Epsilon-greedy exploration
         if np.random.random() < self.epsilon:
@@ -118,16 +170,31 @@ class LinearQAgentGrouped:
         best_score = -float('inf')
         best_action = None
         best_features = None
+        all_scores = []  # For debug
         
         for action in valid_actions:
             lines = lines_cleared_per_action[action] if lines_cleared_per_action is not None else 0
             features = self.get_features_from_obs(obs[action], lines)
             score = self.evaluate(features)
+            all_scores.append((action, score, features, obs[action], lines))
             
             if score > best_score:
                 best_score = score
                 best_action = action
                 best_features = features
+        
+        if debug:
+            # Sort by score and show top 5 and bottom 5
+            all_scores.sort(key=lambda x: x[1], reverse=True)
+            print(f"\n=== DEBUG: {len(valid_actions)} valid actions ===")
+            print(f"Weights: {self.weights}")
+            print("\nTop 5 actions:")
+            for action, score, features, raw, lines in all_scores[:5]:
+                print(f"  Action {action:3d}: score={score:+.4f}, lines={lines}, features={features}")
+            print("\nBottom 5 actions:")
+            for action, score, features, raw, lines in all_scores[-5:]:
+                print(f"  Action {action:3d}: score={score:+.4f}, lines={lines}, features={features}")
+            print(f"\nChosen: action {best_action}, score {best_score:.4f}")
         
         return best_action, best_features
     

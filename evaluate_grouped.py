@@ -15,7 +15,7 @@ import cv2
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="train_lin_grouped.cleanrl_model")
+    parser.add_argument("--model-path", type=str, default="train_lin_grouped_board_rewards.cleanrl_model")
     parser.add_argument("--env-id", type=str, default="tetris_gymnasium/Tetris")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--num-episodes", type=int, default=10)

@@ -16,6 +16,10 @@ def parse_args():
     parser.add_argument("--render-upscale", type=int, default=40)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-episodes", type=int, default=1)
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug output for first N steps")
+    parser.add_argument("--debug-steps", type=int, default=5,
+                        help="Number of steps to show debug output")
     return parser.parse_args()
 
 
@@ -49,6 +53,8 @@ def main():
         truncated = False
         total_reward = 0
         total_lines = 0
+        step_count = 0
+        current_agg_height = 0  # Track aggregate height for line estimation
         
         while not (terminated or truncated):
             env.render()
@@ -56,10 +62,19 @@ def main():
             
             # Choose best action using feature vectors
             # obs shape: (n_actions, 13) from FeatureVectorObservation
-            action, _ = agent.choose_action(obs, action_mask)
+            debug_this_step = args.debug and step_count < args.debug_steps
+            action, chosen_features = agent.choose_action(
+                obs, action_mask, 
+                debug=debug_this_step,
+                current_agg_height=current_agg_height
+            )
             
             if action is None:
                 break
+            
+            # Update current aggregate height from chosen afterstate
+            # Column heights are indices 0-9
+            current_agg_height = float(np.sum(obs[action, :10]))
             
             # Execute
             obs, reward, terminated, truncated, info = env.step(action)
@@ -67,8 +82,10 @@ def main():
             
             total_reward += reward
             total_lines += info.get("lines_cleared", 0)
+            step_count += 1
             
-            print(f"Episode {ep+1} | Score: {total_reward:.0f} | Lines: {total_lines}", end='\r', flush=True)
+            if not debug_this_step:
+                print(f"Episode {ep+1} | Score: {total_reward:.0f} | Lines: {total_lines}", end='\r', flush=True)
         
         print(f"\nEpisode {ep+1} Final Score: {total_reward:.0f} | Lines: {total_lines}")
         all_scores.append(total_reward)

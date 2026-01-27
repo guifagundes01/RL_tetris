@@ -125,9 +125,6 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 20
     """the frequency of training"""
-    hole_penalty: float = 0.0
-    """penalty per newly created hole (0 disables shaping)"""
-
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -181,16 +178,6 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
-
-def count_holes(board: np.ndarray) -> int:
-    """Count holes (empty cells with a filled cell above) in a board."""
-    grid = np.asarray(board)
-    if grid.ndim != 2:
-        return 0
-    filled = grid > 0
-    filled_above = np.maximum.accumulate(filled, axis=0)
-    holes = (~filled) & filled_above
-    return int(holes.sum())
 
 
 if __name__ == "__main__":
@@ -348,15 +335,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         next_board = infos["board"][0]
         action_mask = infos["action_mask"][0]
         epoch_lines_cleared += infos["lines_cleared"][0]
-        if args.hole_penalty != 0.0:
-            holes_before = count_holes(board)
-            holes_after = count_holes(next_board)
-            holes_created = max(0, holes_after - holes_before)
-            if holes_created > 0:
-                rewards = rewards.copy()
-                rewards[0] -= args.hole_penalty * holes_created
-            if global_step % 100 == 0:
-                writer.add_scalar("charts/holes_created", holes_created, global_step)
 
         # # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:

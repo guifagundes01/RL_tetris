@@ -14,7 +14,7 @@ from policy_linear_Q_grouped import LinearQAgentGrouped, create_grouped_env
 NUM_EPISODES = 500
 BATCH_SIZE = 16
 MEMORY_SIZE = 2000
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 RENDER = False
 SAVE_WEIGHTS = True
 # ====================================

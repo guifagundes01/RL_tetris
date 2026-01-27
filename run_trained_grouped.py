@@ -16,7 +16,7 @@ import cv2
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--model-path", type=str, default="train_lin_grouped_board_rewards.cleanrl_model")
     parser.add_argument("--env-id", type=str, default="tetris_gymnasium/Tetris")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--epsilon", type=float, default=0.0)
@@ -31,13 +31,23 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    env = gym.make(
-        args.env_id,
-        render_mode="human",
-        # gravity=True,
-        render_upscale=args.render_upscale,
+
+    # env = gym.make(args.env_id, render_mode="rgb_array", gravity=False)
+    # # env = gym.make(
+    # #     args.env_id,
+    # #     render_mode="human",
+    # #     # gravity=True,
+    # #     render_upscale=args.render_upscale,
+    # # )
+    # env = GroupedActionsObservations(env, observation_wrappers=[FeatureVectorObservation(env, report_height=True, report_max_height=True, report_holes=True, report_bumpiness=True)])
+
+
+
+    env = gym.make(args.env_id, render_mode="rgb_array", gravity=False)
+            # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
+    env = GroupedActionsObservations(
+        env, observation_wrappers=[FeatureVectorObservation(env)]
     )
-    env = GroupedActionsObservations(env, observation_wrappers=[FeatureVectorObservation(env)])
     env = gym.wrappers.RecordEpisodeStatistics(env)
 
     model = QNetwork(type("EnvWrap", (), {"single_observation_space": env.observation_space})())
