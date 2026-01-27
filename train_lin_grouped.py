@@ -125,12 +125,18 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 20
     """the frequency of training"""
-    hole_penalty: float = 2.0
+    hole_penalty: float = 0.1
     """penalty per newly created hole (0 disables shaping)"""
-    bumpiness_penalty: float = 0.5
-    """penalty for height differences between adjacent columns"""
-    aggregate_hole_penalty: float = 0.1
-    """penalty per total hole in the board (cumulative pressure)"""
+    bumpiness_penalty: float = 0.01
+    """penalty for height differences between adjacent columns (potential-based)"""
+    aggregate_hole_penalty: float = 0.0
+    """penalty per total hole in the board (disabled - causes divergence)"""
+    aggregate_height_penalty: float = 0.001
+    """penalty for aggregate height increase (potential-based)"""
+    max_height_penalty: float = 0.005
+    """penalty for max height increase (potential-based)"""
+    reward_clip: float = 5.0
+    """clip shaped rewards to [-clip, +clip] to prevent divergence"""
 
 
 def make_env(env_id, seed, idx, capture_video, run_name):
@@ -363,41 +369,61 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         # Get features from the chosen action's afterstate
         action_idx = actions[0]
         
-        # Current state features (before action)
-        obs_holes_before = obs[0, action_idx, 11] if obs.ndim == 3 else obs[action_idx, 11]
+        # Current state features (before action) - from the chosen action's afterstate
+        obs_row_before = obs[0, action_idx, :] if obs.ndim == 3 else obs[action_idx, :]
+        obs_holes_before = float(obs_row_before[11])
+        obs_bumpiness_before = float(obs_row_before[12])
+        obs_max_height_before = float(obs_row_before[10])
+        obs_aggregate_height_before = float(np.sum(obs_row_before[0:10]))
         
         # Next state features (after action)
         # Use first valid action's features as representative of current board state
         valid_action = np.where(action_mask == 1)[0][0] if np.any(action_mask == 1) else 0
-        obs_holes_after = next_obs[0, valid_action, 11] if next_obs.ndim == 3 else next_obs[valid_action, 11]
-        obs_bumpiness = next_obs[0, valid_action, 12] if next_obs.ndim == 3 else next_obs[valid_action, 12]
-        obs_max_height = next_obs[0, valid_action, 10] if next_obs.ndim == 3 else next_obs[valid_action, 10]
+        obs_row = next_obs[0, valid_action, :] if next_obs.ndim == 3 else next_obs[valid_action, :]
         
-        # Reward shaping for better piece placement
+        # Feature extraction: [heights(0-9), max_height(10), holes(11), bumpiness(12)]
+        obs_aggregate_height = float(np.sum(obs_row[0:10]))
+        obs_max_height = float(obs_row[10])
+        obs_holes_after = float(obs_row[11])
+        obs_bumpiness = float(obs_row[12])
+        
+        # POTENTIAL-BASED reward shaping (difference between states)
+        # This is theoretically sound and doesn't cause divergence
         rewards = rewards.copy()
         shaping_penalty = 0.0
         
-        # Hole penalty (new holes created)
+        # Hole penalty (new holes created this step)
         if args.hole_penalty != 0.0:
-            holes_created = max(0, int(obs_holes_after) - int(obs_holes_before))
-            if holes_created > 0:
-                shaping_penalty += args.hole_penalty * holes_created
+            holes_created = max(0, obs_holes_after - obs_holes_before)
+            shaping_penalty += args.hole_penalty * holes_created
         
-        # Aggregate hole penalty (total holes - constant pressure)
-        if args.aggregate_hole_penalty != 0.0:
-            shaping_penalty += args.aggregate_hole_penalty * float(obs_holes_after)
-        
-        # Bumpiness penalty (uneven surface)
+        # Bumpiness penalty (INCREASE in bumpiness, not absolute value)
         if args.bumpiness_penalty != 0.0:
-            shaping_penalty += args.bumpiness_penalty * (float(obs_bumpiness) / 10.0)  # Normalize
+            bumpiness_increase = max(0, obs_bumpiness - obs_bumpiness_before)
+            shaping_penalty += args.bumpiness_penalty * bumpiness_increase
+        
+        # Aggregate height penalty (INCREASE in aggregate height)
+        if args.aggregate_height_penalty != 0.0:
+            height_increase = max(0, obs_aggregate_height - obs_aggregate_height_before)
+            shaping_penalty += args.aggregate_height_penalty * height_increase
+        
+        # Max height penalty (INCREASE in max height)
+        if args.max_height_penalty != 0.0:
+            max_height_increase = max(0, obs_max_height - obs_max_height_before)
+            shaping_penalty += args.max_height_penalty * max_height_increase
         
         rewards[0] -= shaping_penalty
+        
+        # Clip rewards to prevent extreme values causing divergence
+        rewards[0] = np.clip(rewards[0], -args.reward_clip, args.reward_clip)
         
         if global_step % 100 == 0:
             writer.add_scalar("charts/holes_total", obs_holes_after, global_step)
             writer.add_scalar("charts/bumpiness", obs_bumpiness, global_step)
             writer.add_scalar("charts/max_height", obs_max_height, global_step)
+            writer.add_scalar("charts/aggregate_height", obs_aggregate_height, global_step)
             writer.add_scalar("charts/shaping_penalty", shaping_penalty, global_step)
+            writer.add_scalar("charts/shaped_reward", rewards[0], global_step)
 
         # # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
