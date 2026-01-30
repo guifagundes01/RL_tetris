@@ -1,10 +1,15 @@
 import gymnasium as gym
 import cv2
 import numpy as np
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from tetris_gymnasium.envs import Tetris
 from policy_linear_Q import LinearQLearningAgent
-from policies import get_possible_next_states
-
+from tetris_material.policies import get_possible_next_states
 # ---- CONFIG ----
 WEIGHTS = np.array([0.5, -0.01, -0.5, -0.5])  # example learned weights
 RENDER = True

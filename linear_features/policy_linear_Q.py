@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from policies import get_possible_next_states, heights, holes # reusing your code
+from tetris_material.policies import get_possible_next_states, heights, holes # reusing your code
 
 class LinearQLearningAgent:
     def __init__(self, num_features=4, learning_rate=0.01, discount=0.95, epsilon=1.0):

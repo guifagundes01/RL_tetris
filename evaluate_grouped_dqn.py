@@ -9,15 +9,17 @@ from tetris_gymnasium.envs import Tetris
 from tetris_gymnasium.wrappers.grouped import GroupedActionsObservations
 from tetris_gymnasium.wrappers.observation import FeatureVectorObservation
 
-from train_lin_grouped_original import QNetwork
+from train_lin_grouped_dqn import QNetwork
+
+import time
 
 import cv2
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="train_lin_grouped_original.cleanrl_model")
+    parser.add_argument("--model-path", type=str, default="runs/train_lin_grouped_github/phi_pi__1__1769719089/train_lin_grouped_github.cleanrl_model")
     parser.add_argument("--env-id", type=str, default="tetris_gymnasium/Tetris")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--num-episodes", type=int, default=30)
     parser.add_argument("--epsilon", type=float, default=0.0, help="Exploration rate")
     parser.add_argument("--render-upscale", type=int, default=40)
@@ -31,13 +33,13 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     # Create environment
-    render_mode = "rgb_array"
+    render_mode = "human"
     env = gym.make(
         args.env_id,
         render_mode=render_mode,
-        gravity=True,
+        gravity=False,
     )
-    env = GroupedActionsObservations(env, observation_wrappers=[FeatureVectorObservation(env, report_height=True, report_max_height=True, report_holes=True, report_bumpiness=True)])
+    env = GroupedActionsObservations(env, observation_wrappers=[FeatureVectorObservation(env)])
     env = gym.wrappers.RecordEpisodeStatistics(env)
 
     # Load model
@@ -48,7 +50,7 @@ def main() -> None:
     # Store rewards and lines cleared for each episode
     reward_episodes = np.zeros(args.num_episodes)
     lines_episodes = np.zeros(args.num_episodes)
-
+    time_episodes = np.zeros(args.num_episodes)
     for episode in range(args.num_episodes):
         obs, info = env.reset(seed=args.seed + episode)
         action_mask = info.get("action_mask", np.ones(obs.shape[0], dtype=np.int8))
@@ -56,10 +58,12 @@ def main() -> None:
         truncated = False
         total_reward = 0.0
         total_lines = 0
-
+        start_time = time.time()
         while not (terminated or truncated):
             env.render()
             cv2.waitKey(1)
+            # Wait for 1 second
+            # time.sleep(1)
             obs_t = torch.as_tensor(obs, dtype=torch.float32)
             if obs_t.ndim == 2:
                 obs_t = obs_t.unsqueeze(0)
@@ -87,11 +91,12 @@ def main() -> None:
             total_reward += float(reward)
             total_lines += info.get("lines_cleared", 0)
 
-            print(f"Episode {episode + 1} | Score: {total_reward:.0f} | Lines: {total_lines}", end='\r', flush=True)
+            print(f"Episode {episode + 1} | Score: {total_reward:.0f}", end='\r', flush=True)
 
+        time_episodes[episode] = time.time() - start_time
         reward_episodes[episode] = total_reward
         lines_episodes[episode] = total_lines
-        print(f"Episode {episode + 1}/{args.num_episodes} | Score: {total_reward:.0f} | Lines: {total_lines}")
+        print(f"Episode {episode + 1}/{args.num_episodes} | Score: {total_reward:.0f} | Time: {time_episodes[episode]:.2f}s")
 
     env.close()
 
@@ -102,8 +107,10 @@ def main() -> None:
     print(f"Episodes: {args.num_episodes}")
     print(f"Reward per episode: {reward_episodes}")
     print(f"Lines per episode: {lines_episodes}")
+    print(f"Time per episode: {time_episodes}")
     print(f"Average reward: {np.mean(reward_episodes):.2f} +/- {np.std(reward_episodes):.2f}")
     print(f"Average lines: {np.mean(lines_episodes):.2f} +/- {np.std(lines_episodes):.2f}")
+    print(f"Average time: {np.mean(time_episodes):.2f} +/- {np.std(time_episodes):.2f}")
     print(f"Min/Max reward: {np.min(reward_episodes):.0f} / {np.max(reward_episodes):.0f}")
     print(f"Min/Max lines: {np.min(lines_episodes):.0f} / {np.max(lines_episodes):.0f}")
 

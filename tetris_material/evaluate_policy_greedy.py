@@ -4,7 +4,7 @@ import numpy as np
 from tetris_gymnasium.envs.tetris import Tetris
 import policies
 
-NB_EPISODES = 10
+NB_EPISODES = 5
 
 if __name__ == "__main__":
     #create the environement

@@ -9,16 +9,16 @@ from tetris_gymnasium.envs import Tetris
 from tetris_gymnasium.wrappers.grouped import GroupedActionsObservations
 from tetris_gymnasium.wrappers.observation import FeatureVectorObservation
 
-from train_lin_grouped_original import QNetwork
+from train_lin_grouped_dqn import QNetwork
 
 import cv2
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="checkpoint_95000.cleanrl_model")
+    parser.add_argument("--model-path", type=str, default="runs/train_lin_grouped_github/phi_pi__1__1769719089/train_lin_grouped_github.cleanrl_model")
     parser.add_argument("--env-id", type=str, default="tetris_gymnasium/Tetris")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--epsilon", type=float, default=0.0)
     parser.add_argument("--render-upscale", type=int, default=40)
     return parser.parse_args()
@@ -43,12 +43,12 @@ def main() -> None:
 
 
 
-    env = gym.make(args.env_id, render_mode="rgb_array", gravity=False)
+    env = gym.make(args.env_id, render_mode="human", gravity=False)
             # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
     env = GroupedActionsObservations(
         env, observation_wrappers=[FeatureVectorObservation(env)]
     )
-    env = gym.wrappers.RecordVideo(env, f"videos/run_trained_grouped")
+    # env = gym.wrappers.RecordVideo(env, f"videos/run_trained_grouped")
 
     model = QNetwork(type("EnvWrap", (), {"single_observation_space": env.observation_space})())
     model.load_state_dict(torch.load(args.model_path, map_location="cpu"))
@@ -61,8 +61,8 @@ def main() -> None:
     total_reward = 0.0
 
     while not (terminated or truncated):
-        # env.render()
-        # cv2.waitKey(1)
+        env.render()
+        cv2.waitKey(1)
         obs_t = torch.as_tensor(obs, dtype=torch.float32)
         if obs_t.ndim == 2:
             obs_t = obs_t.unsqueeze(0)

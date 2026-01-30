@@ -1,9 +1,4 @@
-""" Script to train a DQN agent on Tetris environment using CNN architecture.
 
-The script is a modified version of the [CleanRL's](https://github.com/vwxyzjn/cleanrl) DQN implementation.
-
-docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
-"""
 import os
 import random
 import time
@@ -26,47 +21,6 @@ from tetris_gymnasium.wrappers.grouped import GroupedActionsObservations
 from tetris_gymnasium.wrappers.observation import FeatureVectorObservation
 
 
-# Evaluation
-def evaluate(
-    model_path: str,
-    make_env: Callable,
-    env_id: str,
-    eval_episodes: int,
-    run_name: str,
-    Model: torch.nn.Module,
-    device: torch.device = torch.device("cpu"),
-    epsilon: float = 0.05,
-    capture_video: bool = True,
-):
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, 0, capture_video, run_name)])
-    model = Model(envs).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    obs, _ = envs.reset()
-    episodic_returns = []
-    while len(episodic_returns) < eval_episodes:
-        if random.random() < epsilon:
-            actions = np.array(
-                [envs.single_action_space.sample() for _ in range(envs.num_envs)]
-            )
-        else:
-            q_values = model(torch.Tensor(obs).to(device))
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
-        next_obs, _, _, _, infos = envs.step(actions)
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if "episode" not in info:
-                    continue
-                # print(
-                #     f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}"
-                # )
-                episodic_returns += [info["episode"]["r"]]
-        obs = next_obs
-
-    return episodic_returns
-
-
 # Training
 @dataclass
 class Args:
@@ -86,7 +40,7 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    save_model: bool = False
+    save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
     upload_model: bool = False
     """whether to upload the saved model to huggingface"""
@@ -99,9 +53,9 @@ class Args:
     # env_id: str = "BreakoutNoFrameskip-v4"
     env_id: str = "tetris_gymnasium/Tetris"
     """the id of the environment"""
-    total_timesteps: int = 20000
+    total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = 0.001
+    learning_rate: float = 1e-3
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -109,8 +63,8 @@ class Args:
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
-    tau: float = 0.005
-    """the target network update rate (soft update)"""
+    tau: float = 0.01
+    """the target network update rate"""
     target_network_frequency: int = 1
     """the timesteps it takes to update the target network"""
     batch_size: int = 512
@@ -125,37 +79,12 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 20
     """the frequency of training"""
-    hole_penalty: float = 0.1
-    """penalty per newly created hole (0 disables shaping)"""
-    bumpiness_penalty: float = 0.01
-    """penalty for height differences between adjacent columns (potential-based)"""
-    aggregate_hole_penalty: float = 0.0
-    """penalty per total hole in the board (disabled - causes divergence)"""
-    aggregate_height_penalty: float = 0.001
-    """penalty for aggregate height increase (potential-based)"""
-    max_height_penalty: float = 0.005
-    """penalty for max height increase (potential-based)"""
-    reward_clip: float = 5.0
-    """clip shaped rewards to [-clip, +clip] to prevent divergence"""
 
 
 def make_env(env_id, seed, idx, capture_video, run_name):
-    """
-    Create environment with GroupedActionsObservations + FeatureVectorObservation.
-    
-    FeatureVectorObservation output order (13 features total):
-    - indices 0-9: Column heights (actual height, higher = taller stack)
-    - index 10: Max height
-    - index 11: Number of holes
-    - index 12: Bumpiness
-    
-    The QNetwork learns from these features directly.
-    Reward shaping also uses these features from the observation.
-    """
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array", gravity=False)
-            # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
             env = GroupedActionsObservations(
                 env, observation_wrappers=[FeatureVectorObservation(env)]
             )
@@ -166,7 +95,6 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             )
         else:
             env = gym.make(env_id, render_mode="rgb_array", gravity=False)
-            # FeatureVectorObservation: [heights(10), max_height(1), holes(1), bumpiness(1)]
             env = GroupedActionsObservations(
                 env, observation_wrappers=[FeatureVectorObservation(env)]
             )
@@ -183,13 +111,10 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        input_dim = np.array(env.single_observation_space.shape[-1])
         self.network = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(np.array(env.single_observation_space.shape[-1]), 64),
             nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
         )
@@ -222,30 +147,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     args = tyro.cli(Args)
     # Env name
     greek_letters = [
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-        "epsilon",
-        "zeta",
-        "eta",
-        "theta",
-        "iota",
-        "kappa",
-        "lambda",
-        "mu",
-        "nu",
-        "xi",
-        "omicron",
-        "pi",
-        "rho",
-        "sigma",
-        "tau",
-        "upsilon",
-        "phi",
-        "chi",
-        "psi",
-        "omega",
+        "alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota","kappa","lambda","mu","nu","xi","omicron","pi","rho","sigma","tau","upsilon","phi","chi","psi","omega",
     ]
     run_name = f"{args.exp_name}/{random.choice(greek_letters)}_{random.choice(greek_letters)}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -275,7 +177,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -308,15 +209,15 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     )
     start_time = time.time()
 
-    # TRY NOT TO MODIFY: start the game
+    # start the game
     obs, info = envs.reset(seed=args.seed)
+    board = info["board"][0]
     action_mask = info["action_mask"][0]
 
     epoch = 0
     global_step = 0
     epoch_lines_cleared = 0
     while global_step < args.total_timesteps:
-        # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
             args.start_e,
             args.end_e,
@@ -331,101 +232,22 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 ]
             )
         else:
-            # # Normalization by dividing with piece count
-            # q_values = (
-            #     torch.ones((1, envs.single_action_space.n, 1), dtype=torch.float)
-            #     * -np.inf
-            # )
-            # action_mask_t = torch.as_tensor(action_mask, device=device)  # device is cuda:0
-            # # optionally make it boolean
-            # action_mask_t = action_mask_t.bool()  # or (action_mask_t == 1)
-            # q_values[:, action_mask_t, :] = q_network(torch.Tensor(obs[:, action_mask_t, :]).to(device))
-            # # q_values[:, action_mask == 1, :] = q_network(
-            # #     torch.Tensor(obs[:, action_mask == 1, :]).to(device)
-            # # )
-            # actions = torch.argmax(q_values, dim=1)[0].cpu().numpy()
-            # Compute Q-values on the correct device and mask invalid actions so argmax
-            # can never select an illegal action.
-            obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32)
-            q_values = q_network(obs_t)  # (num_envs, n_actions, 1)
+            q_values = (
+                torch.ones((1, envs.single_action_space.n, 1), dtype=torch.float)
+                * -np.inf
+            )
+            q_values[:, action_mask == 1, :] = q_network(
+                torch.Tensor(obs[:, action_mask == 1, :]).to(device)
+            )
+            actions = torch.argmax(q_values, dim=1)[0].cpu().numpy()
 
-            action_mask_t = torch.as_tensor(action_mask, device=device).bool()  # (n_actions,) or (num_envs, n_actions)
-            if action_mask_t.ndim == 1:
-                action_mask_t = action_mask_t.unsqueeze(0).expand(q_values.shape[0], -1)
-
-            q_values = q_values.masked_fill(~action_mask_t.unsqueeze(-1), -1e9)
-            actions = torch.argmax(q_values.squeeze(-1), dim=1).cpu().numpy()
-
-        # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         global_step += 1
 
+        next_board = infos["board"][0]
         action_mask = infos["action_mask"][0]
         epoch_lines_cleared += infos["lines_cleared"][0]
-        
-        # Extract features from FeatureVectorObservation for reward shaping
-        # Feature order: [heights(0-9), max_height(10), holes(11), bumpiness(12)]
-        # obs shape: (num_envs, n_actions, 13)
-        # Get features from the chosen action's afterstate
-        action_idx = actions[0]
-        
-        # Current state features (before action) - from the chosen action's afterstate
-        obs_row_before = obs[0, action_idx, :] if obs.ndim == 3 else obs[action_idx, :]
-        obs_holes_before = float(obs_row_before[11])
-        obs_bumpiness_before = float(obs_row_before[12])
-        obs_max_height_before = float(obs_row_before[10])
-        obs_aggregate_height_before = float(np.sum(obs_row_before[0:10]))
-        
-        # Next state features (after action)
-        # Use first valid action's features as representative of current board state
-        valid_action = np.where(action_mask == 1)[0][0] if np.any(action_mask == 1) else 0
-        obs_row = next_obs[0, valid_action, :] if next_obs.ndim == 3 else next_obs[valid_action, :]
-        
-        # Feature extraction: [heights(0-9), max_height(10), holes(11), bumpiness(12)]
-        obs_aggregate_height = float(np.sum(obs_row[0:10]))
-        obs_max_height = float(obs_row[10])
-        obs_holes_after = float(obs_row[11])
-        obs_bumpiness = float(obs_row[12])
-        
-        # POTENTIAL-BASED reward shaping (difference between states)
-        # This is theoretically sound and doesn't cause divergence
-        rewards = rewards.copy()
-        shaping_penalty = 0.0
-        
-        # Hole penalty (new holes created this step)
-        if args.hole_penalty != 0.0:
-            holes_created = max(0, obs_holes_after - obs_holes_before)
-            shaping_penalty += args.hole_penalty * holes_created
-        
-        # Bumpiness penalty (INCREASE in bumpiness, not absolute value)
-        if args.bumpiness_penalty != 0.0:
-            bumpiness_increase = max(0, obs_bumpiness - obs_bumpiness_before)
-            shaping_penalty += args.bumpiness_penalty * bumpiness_increase
-        
-        # Aggregate height penalty (INCREASE in aggregate height)
-        if args.aggregate_height_penalty != 0.0:
-            height_increase = max(0, obs_aggregate_height - obs_aggregate_height_before)
-            shaping_penalty += args.aggregate_height_penalty * height_increase
-        
-        # Max height penalty (INCREASE in max height)
-        if args.max_height_penalty != 0.0:
-            max_height_increase = max(0, obs_max_height - obs_max_height_before)
-            shaping_penalty += args.max_height_penalty * max_height_increase
-        
-        rewards[0] -= shaping_penalty
-        
-        # Clip rewards to prevent extreme values causing divergence
-        rewards[0] = np.clip(rewards[0], -args.reward_clip, args.reward_clip)
-        
-        if global_step % 100 == 0:
-            writer.add_scalar("charts/holes_total", obs_holes_after, global_step)
-            writer.add_scalar("charts/bumpiness", obs_bumpiness, global_step)
-            writer.add_scalar("charts/max_height", obs_max_height, global_step)
-            writer.add_scalar("charts/aggregate_height", obs_aggregate_height, global_step)
-            writer.add_scalar("charts/shaping_penalty", shaping_penalty, global_step)
-            writer.add_scalar("charts/shaped_reward", rewards[0], global_step)
 
-        # # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info and "episode" in info:
@@ -449,45 +271,29 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                     epoch_lines_cleared = 0
                     epoch += 1
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
 
-        # Save to replay buffer: store the chosen action's features
-        # obs shape: (num_envs, n_actions, 13), we want features for the chosen action
-        action_idx = actions[0]
-        chosen_obs = obs[0, action_idx, :].reshape(1, -1)  # Shape: (1, 13)
-        
-        # For next obs, use first valid action as representative
-        valid_action = np.where(action_mask == 1)[0][0] if np.any(action_mask == 1) else 0
-        next_chosen_obs = next_obs[0, valid_action, :].reshape(1, -1)  # Shape: (1, 13)
-        
-        rb.add(chosen_obs, next_chosen_obs, actions, rewards, terminations, infos)
+        rb.add(board, next_board, actions, rewards, terminations, infos)
 
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+        board = next_board.copy()
         obs = next_obs
 
-        # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    # Double DQN: use online network to select action, target network to evaluate
-                    next_q_online = q_network(data.next_observations).squeeze(-1).squeeze(-1)
-                    next_q_target = target_network(data.next_observations).squeeze(-1).squeeze(-1)
-                    # For single observation per sample, just use the target value directly
-                    # (In grouped setting, each sample is one state-value, not state-action)
-                    target_max = next_q_target
+
+                    target_max = target_network(data.next_observations).squeeze(-1).squeeze(-1)
                     td_target = data.rewards.flatten() + args.gamma * target_max * (
                         1 - data.dones.flatten()
                     )
                 old_val = q_network(data.observations).squeeze(-1).squeeze(-1)
 
                 assert old_val.shape == td_target.shape
-                # Huber loss is more robust to outliers than MSE
-                loss = F.smooth_l1_loss(old_val, td_target)
+                loss = F.mse_loss(old_val, td_target)
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
@@ -513,8 +319,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 # optimize the model
                 optimizer.zero_grad()
                 loss.backward()
-                # Gradient clipping to prevent exploding gradients
-                torch.nn.utils.clip_grad_norm_(q_network.parameters(), max_norm=10.0)
                 optimizer.step()
 
             # update target network
@@ -527,20 +331,10 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                         + (1.0 - args.tau) * target_network_param.data
                     )
 
-            # Save checkpoint every 5000 steps
-            if global_step % 5000 == 0 and global_step > 0:
-                checkpoint_path = f"runs/{run_name}/checkpoint_{global_step}.cleanrl_model"
-                torch.save(q_network.state_dict(), checkpoint_path)
-                print(f"Saved checkpoint to {checkpoint_path}")
-
     if args.save_model:
         model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
         torch.save(q_network.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
-    try:
-        envs.close()
-    except AttributeError:
-        # wandb gym integration has compatibility issues with RecordVideo wrapper
-        pass
+    envs.close()
     writer.close()
